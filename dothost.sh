@@ -2,7 +2,7 @@
 
 # Dothost - Website Hosting Management System
 # Author: Dothost Team
-# Version: 1.1
+# Version: 1.2
 
 # Colors for better readability
 RED='\033[0;31m'
@@ -20,15 +20,232 @@ LOGS_DIR="/var/log/dothost"
 SECURITY_DIR="/etc/dothost/security"
 PHP_VERSIONS=("7.4" "8.0" "8.1" "8.2")
 
-# Create necessary directories if they don't exist
-mkdir -p "$WEBSITES_DIR" "$SSL_DIR" "$LOGS_DIR" "$SECURITY_DIR" "$NGINX_SITES_AVAILABLE" "$NGINX_SITES_ENABLED"
-
 # Function to check if running as root
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         echo -e "${RED}Please run as root${NC}"
         exit 1
     fi
+}
+
+# Function to install dependencies
+install_dependencies() {
+    echo -e "${YELLOW}Installing system dependencies...${NC}"
+    
+    # Update package lists
+    apt-get update
+    
+    # Install required packages
+    apt-get install -y \
+        nginx \
+        curl \
+        wget \
+        git \
+        unzip \
+        certbot \
+        python3-certbot-nginx \
+        ufw \
+        fail2ban \
+        libmodsecurity3 \
+        libmodsecurity-dev \
+        gnupg2 \
+        ca-certificates \
+        lsb-release \
+        software-properties-common
+    
+    # Install PHP versions
+    for version in "${PHP_VERSIONS[@]}"; do
+        echo -e "${YELLOW}Installing PHP $version...${NC}"
+        add-apt-repository -y ppa:ondrej/php
+        apt-get update
+        apt-get install -y \
+            php$version-fpm \
+            php$version-cli \
+            php$version-common \
+            php$version-curl \
+            php$version-mbstring \
+            php$version-xml \
+            php$version-mysql \
+            php$version-gd \
+            php$version-zip \
+            php$version-bcmath \
+            php$version-intl \
+            php$version-soap \
+            php$version-imap \
+            php$version-ldap \
+            php$version-redis \
+            php$version-memcached
+    done
+    
+    # Install Composer
+    if ! command -v composer &> /dev/null; then
+        echo -e "${YELLOW}Installing Composer...${NC}"
+        curl -sS https://getcomposer.org/installer | php
+        mv composer.phar /usr/local/bin/composer
+        chmod +x /usr/local/bin/composer
+    fi
+    
+    # Install Node.js and npm
+    if ! command -v node &> /dev/null; then
+        echo -e "${YELLOW}Installing Node.js and npm...${NC}"
+        curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+        apt-get install -y nodejs
+    fi
+    
+    # Create necessary directories
+    mkdir -p "$WEBSITES_DIR" "$SSL_DIR" "$LOGS_DIR" "$SECURITY_DIR" "$NGINX_SITES_AVAILABLE" "$NGINX_SITES_ENABLED"
+    
+    # Configure PHP-FPM
+    for version in "${PHP_VERSIONS[@]}"; do
+        # Optimize PHP-FPM configuration
+        sed -i "s/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/" /etc/php/$version/fpm/php.ini
+        sed -i "s/memory_limit = .*/memory_limit = 256M/" /etc/php/$version/fpm/php.ini
+        sed -i "s/upload_max_filesize = .*/upload_max_filesize = 64M/" /etc/php/$version/fpm/php.ini
+        sed -i "s/post_max_size = .*/post_max_size = 64M/" /etc/php/$version/fpm/php.ini
+        sed -i "s/max_execution_time = .*/max_execution_time = 300/" /etc/php/$version/fpm/php.ini
+        
+        # Optimize PHP-FPM pool configuration
+        sed -i "s/pm = dynamic/pm = ondemand/" /etc/php/$version/fpm/pool.d/www.conf
+        sed -i "s/pm.max_children = .*/pm.max_children = 50/" /etc/php/$version/fpm/pool.d/www.conf
+        sed -i "s/pm.start_servers = .*/pm.start_servers = 5/" /etc/php/$version/fpm/pool.d/www.conf
+        sed -i "s/pm.min_spare_servers = .*/pm.min_spare_servers = 5/" /etc/php/$version/fpm/pool.d/www.conf
+        sed -i "s/pm.max_spare_servers = .*/pm.max_spare_servers = 35/" /etc/php/$version/fpm/pool.d/www.conf
+        
+        # Restart PHP-FPM
+        systemctl restart php$version-fpm
+    done
+    
+    # Configure Nginx
+    cat > /etc/nginx/nginx.conf << EOF
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+    worker_connections 1024;
+    multi_accept on;
+}
+
+http {
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    server_tokens off;
+
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss application/atom+xml image/svg+xml;
+
+    include /etc/nginx/conf.d/*.conf;
+    include /etc/nginx/sites-enabled/*;
+}
+EOF
+
+    # Restart Nginx
+    systemctl restart nginx
+    
+    echo -e "${GREEN}All dependencies have been installed and configured${NC}"
+}
+
+# Function to check system requirements
+check_system() {
+    echo -e "${YELLOW}Checking system requirements...${NC}"
+    
+    # Check if running on a supported system
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        if [[ "$ID" != "ubuntu" && "$ID" != "debian" ]]; then
+            echo -e "${RED}This script only supports Ubuntu and Debian systems${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${RED}Could not determine operating system${NC}"
+        exit 1
+    fi
+    
+    # Check available memory
+    total_mem=$(free -m | awk '/^Mem:/{print $2}')
+    if [ "$total_mem" -lt 1024 ]; then
+        echo -e "${YELLOW}Warning: Less than 1GB of RAM detected. Performance may be affected.${NC}"
+    fi
+    
+    # Check available disk space
+    free_space=$(df -m / | awk 'NR==2 {print $4}')
+    if [ "$free_space" -lt 5120 ]; then
+        echo -e "${YELLOW}Warning: Less than 5GB of free disk space detected.${NC}"
+    fi
+    
+    echo -e "${GREEN}System requirements check completed${NC}"
+}
+
+# Function to setup initial system
+setup_system() {
+    echo -e "${YELLOW}Setting up initial system configuration...${NC}"
+    
+    # Set timezone
+    timedatectl set-timezone UTC
+    
+    # Update system
+    apt-get update
+    apt-get upgrade -y
+    
+    # Install dependencies
+    install_dependencies
+    
+    # Configure basic firewall rules (only add, don't modify existing)
+    if ! ufw status | grep -q "Status: active"; then
+        ufw allow ssh
+        ufw allow http
+        ufw allow https
+        ufw --force enable
+    fi
+    
+    # Configure fail2ban
+    if ! systemctl is-active --quiet fail2ban; then
+        cat > /etc/fail2ban/jail.local << EOF
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+bantime = 3600
+
+[nginx-http-auth]
+enabled = true
+filter = nginx-http-auth
+port = http,https
+logpath = /var/log/nginx/error.log
+maxretry = 3
+bantime = 3600
+
+[nginx-botsearch]
+enabled = true
+filter = nginx-botsearch
+port = http,https
+logpath = /var/log/nginx/access.log
+maxretry = 2
+bantime = 86400
+EOF
+        systemctl restart fail2ban
+    fi
+    
+    echo -e "${GREEN}Initial system setup completed${NC}"
 }
 
 # Function to create a new website
@@ -422,33 +639,6 @@ show_security_status() {
     fi
 }
 
-# Main menu
-show_menu() {
-    clear
-    echo -e "${YELLOW}=== Dothost Website Management System ===${NC}"
-    echo "1. Create new website"
-    echo "2. Manage website"
-    echo "3. List all websites"
-    echo "4. Delete website"
-    echo "5. Security Management"
-    echo "6. Exit"
-    echo
-    read -p "Enter your choice (1-6): " choice
-    
-    case $choice in
-        1) create_website ;;
-        2) manage_website ;;
-        3) list_websites ;;
-        4) delete_website ;;
-        5) show_security_menu ;;
-        6) exit 0 ;;
-        *) echo -e "${RED}Invalid choice${NC}" ;;
-    esac
-    
-    read -p "Press Enter to continue..."
-    show_menu
-}
-
 # Security menu
 show_security_menu() {
     clear
@@ -472,6 +662,38 @@ show_security_menu() {
     
     read -p "Press Enter to continue..."
     show_security_menu
+}
+
+# Main menu
+show_menu() {
+    clear
+    echo -e "${YELLOW}=== Dothost Website Management System ===${NC}"
+    echo "1. Setup System (First Time)"
+    echo "2. Create new website"
+    echo "3. Manage website"
+    echo "4. List all websites"
+    echo "5. Delete website"
+    echo "6. Security Management"
+    echo "7. Exit"
+    echo
+    read -p "Enter your choice (1-7): " choice
+    
+    case $choice in
+        1) 
+            check_system
+            setup_system
+            ;;
+        2) create_website ;;
+        3) manage_website ;;
+        4) list_websites ;;
+        5) delete_website ;;
+        6) show_security_menu ;;
+        7) exit 0 ;;
+        *) echo -e "${RED}Invalid choice${NC}" ;;
+    esac
+    
+    read -p "Press Enter to continue..."
+    show_menu
 }
 
 # Check if running as root
