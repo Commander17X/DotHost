@@ -24,7 +24,7 @@ Dothost is a comprehensive website hosting management system that automates the 
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/dothost.git
+git clone https://github.com/command17x/dothost.git
 cd dothost
 ```
 
