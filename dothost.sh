@@ -639,6 +639,69 @@ show_security_status() {
     fi
 }
 
+# Function to manage security headers
+manage_security_headers() {
+    echo -e "${YELLOW}Security Headers Management${NC}"
+    read -p "Enter domain name: " domain
+    
+    if [ ! -f "$NGINX_SITES_AVAILABLE/$domain.conf" ]; then
+        echo -e "${RED}Website not found${NC}"
+        return 1
+    fi
+    
+    while true; do
+        clear
+        echo -e "${YELLOW}=== Managing Security Headers for $domain ===${NC}"
+        echo "1. Add/Update Security Headers"
+        echo "2. Remove Security Headers"
+        echo "3. View Current Security Headers"
+        echo "4. Return to Security Menu"
+        echo
+        read -p "Enter your choice (1-4): " choice
+        
+        case $choice in
+            1)
+                # Add/Update security headers
+                sed -i '/# Security headers/d' "$NGINX_SITES_AVAILABLE/$domain.conf"
+                sed -i '/add_header X-Frame-Options/d' "$NGINX_SITES_AVAILABLE/$domain.conf"
+                sed -i '/add_header X-XSS-Protection/d' "$NGINX_SITES_AVAILABLE/$domain.conf"
+                sed -i '/add_header X-Content-Type-Options/d' "$NGINX_SITES_AVAILABLE/$domain.conf"
+                sed -i '/add_header Strict-Transport-Security/d' "$NGINX_SITES_AVAILABLE/$domain.conf"
+                sed -i '/add_header Content-Security-Policy/d' "$NGINX_SITES_AVAILABLE/$domain.conf"
+                
+                # Add new security headers
+                sed -i '/server_name/a \    # Security headers\n    add_header X-Frame-Options "SAMEORIGIN";\n    add_header X-XSS-Protection "1; mode=block";\n    add_header X-Content-Type-Options "nosniff";\n    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;\n    add_header Content-Security-Policy "default-src '\''self'\''; script-src '\''self'\'' '\''unsafe-inline'\'' '\''unsafe-eval'\''; style-src '\''self'\'' '\''unsafe-inline'\'';";' "$NGINX_SITES_AVAILABLE/$domain.conf"
+                
+                # Test and reload Nginx
+                nginx -t && systemctl reload nginx
+                echo -e "${GREEN}Security headers have been updated${NC}"
+                ;;
+            2)
+                # Remove security headers
+                sed -i '/# Security headers/d' "$NGINX_SITES_AVAILABLE/$domain.conf"
+                sed -i '/add_header X-Frame-Options/d' "$NGINX_SITES_AVAILABLE/$domain.conf"
+                sed -i '/add_header X-XSS-Protection/d' "$NGINX_SITES_AVAILABLE/$domain.conf"
+                sed -i '/add_header X-Content-Type-Options/d' "$NGINX_SITES_AVAILABLE/$domain.conf"
+                sed -i '/add_header Strict-Transport-Security/d' "$NGINX_SITES_AVAILABLE/$domain.conf"
+                sed -i '/add_header Content-Security-Policy/d' "$NGINX_SITES_AVAILABLE/$domain.conf"
+                
+                # Test and reload Nginx
+                nginx -t && systemctl reload nginx
+                echo -e "${GREEN}Security headers have been removed${NC}"
+                ;;
+            3)
+                # View current security headers
+                echo -e "${YELLOW}Current Security Headers:${NC}"
+                grep -A 5 "# Security headers" "$NGINX_SITES_AVAILABLE/$domain.conf"
+                ;;
+            4) return ;;
+            *) echo -e "${RED}Invalid choice${NC}" ;;
+        esac
+        
+        read -p "Press Enter to continue..."
+    done
+}
+
 # Security menu
 show_security_menu() {
     clear
@@ -646,17 +709,19 @@ show_security_menu() {
     echo "1. Configure ModSecurity"
     echo "2. Configure fail2ban"
     echo "3. Configure firewall"
-    echo "4. Show security status"
-    echo "5. Back to main menu"
+    echo "4. Manage Security Headers"
+    echo "5. Show security status"
+    echo "6. Back to main menu"
     echo
-    read -p "Enter your choice (1-5): " choice
+    read -p "Enter your choice (1-6): " choice
     
     case $choice in
         1) configure_modsecurity ;;
         2) configure_fail2ban ;;
         3) configure_firewall ;;
-        4) show_security_status ;;
-        5) return ;;
+        4) manage_security_headers ;;
+        5) show_security_status ;;
+        6) return ;;
         *) echo -e "${RED}Invalid choice${NC}" ;;
     esac
     
